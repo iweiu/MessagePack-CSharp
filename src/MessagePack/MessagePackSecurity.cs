@@ -19,6 +19,8 @@ namespace MessagePack
     /// </summary>
     public class MessagePackSecurity
     {
+        private const int DefaultUntrustedDataMaximumDecompressedSize = 64 * 1024 * 1024;
+
         /// <summary>
         /// Gets an instance preconfigured with settings that omit hash collision resistance protections.
         /// Useful for deserializing fully-trusted and valid msgpack sequences.
@@ -27,6 +29,7 @@ namespace MessagePack
         {
             HashCollisionResistant = false,
             MaximumObjectGraphDepth = 500,
+            MaximumDecompressedSize = int.MaxValue,
         };
 
         /// <summary>
@@ -36,6 +39,7 @@ namespace MessagePack
         {
             HashCollisionResistant = true,
             MaximumObjectGraphDepth = 500,
+            MaximumDecompressedSize = DefaultUntrustedDataMaximumDecompressedSize,
         };
 
         private static readonly SipHash Hash = new();
@@ -62,6 +66,7 @@ namespace MessagePack
 
             this.HashCollisionResistant = copyFrom.HashCollisionResistant;
             this.MaximumObjectGraphDepth = copyFrom.MaximumObjectGraphDepth;
+            this.MaximumDecompressedSize = copyFrom.MaximumDecompressedSize;
         }
 
         /// <summary>
@@ -87,6 +92,12 @@ namespace MessagePack
         public int MaximumObjectGraphDepth { get; private set; } = 500;
 
         /// <summary>
+        /// Gets the maximum decompressed size in bytes allowed when deserializing compressed payloads.
+        /// </summary>
+        /// <value>The default value is <see cref="int.MaxValue"/> for <see cref="TrustedData"/> and 64MB for <see cref="UntrustedData"/>.</value>
+        public int MaximumDecompressedSize { get; private set; } = int.MaxValue;
+
+        /// <summary>
         /// Gets a copy of these options with the <see cref="MaximumObjectGraphDepth"/> property set to a new value.
         /// </summary>
         /// <param name="maximumObjectGraphDepth">The new value for the <see cref="MaximumObjectGraphDepth"/> property.</param>
@@ -100,6 +111,28 @@ namespace MessagePack
 
             var clone = this.Clone();
             clone.MaximumObjectGraphDepth = maximumObjectGraphDepth;
+            return clone;
+        }
+
+        /// <summary>
+        /// Gets a copy of these options with the <see cref="MaximumDecompressedSize"/> property set to a new value.
+        /// </summary>
+        /// <param name="maximumDecompressedSize">The new value for the <see cref="MaximumDecompressedSize"/> property. Must not be negative.</param>
+        /// <returns>The new instance; or the original if the value is unchanged.</returns>
+        public MessagePackSecurity WithMaximumDecompressedSize(int maximumDecompressedSize)
+        {
+            if (this.MaximumDecompressedSize == maximumDecompressedSize)
+            {
+                return this;
+            }
+
+            if (maximumDecompressedSize < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(maximumDecompressedSize));
+            }
+
+            var clone = this.Clone();
+            clone.MaximumDecompressedSize = maximumDecompressedSize;
             return clone;
         }
 
@@ -153,30 +186,32 @@ namespace MessagePack
 
             static HashResistantCache()
             {
+                var type = typeof(T);
+
                 // We have to specially handle some 32-bit types (e.g. float) where multiple in-memory representations should hash to the same value.
                 // Any type supported by the PrimitiveObjectFormatter should be added here if supporting it as a key in a collection makes sense.
                 EqualityComparer =
-                    typeof(T) == typeof(bool) ? (IEqualityComparer<T>)CollisionResistantHasherUnmanaged<bool>.Instance :
-                    typeof(T) == typeof(char) ? (IEqualityComparer<T>)CollisionResistantHasherUnmanaged<char>.Instance :
-                    typeof(T) == typeof(sbyte) ? (IEqualityComparer<T>)CollisionResistantHasherUnmanaged<sbyte>.Instance :
-                    typeof(T) == typeof(byte) ? (IEqualityComparer<T>)CollisionResistantHasherUnmanaged<byte>.Instance :
-                    typeof(T) == typeof(short) ? (IEqualityComparer<T>)CollisionResistantHasherUnmanaged<short>.Instance :
-                    typeof(T) == typeof(ushort) ? (IEqualityComparer<T>)CollisionResistantHasherUnmanaged<ushort>.Instance :
-                    typeof(T) == typeof(int) ? (IEqualityComparer<T>)CollisionResistantHasherUnmanaged<int>.Instance :
-                    typeof(T) == typeof(uint) ? (IEqualityComparer<T>)CollisionResistantHasherUnmanaged<uint>.Instance :
-                    typeof(T) == typeof(long) ? (IEqualityComparer<T>)CollisionResistantHasherUnmanaged<long>.Instance :
-                    typeof(T) == typeof(ulong) ? (IEqualityComparer<T>)CollisionResistantHasherUnmanaged<ulong>.Instance :
-                    typeof(T) == typeof(Guid) ? (IEqualityComparer<T>)CollisionResistantHasherUnmanaged<Guid>.Instance :
+                    type == typeof(bool) ? (IEqualityComparer<T>)CollisionResistantHasherUnmanaged<bool>.Instance :
+                    type == typeof(char) ? (IEqualityComparer<T>)CollisionResistantHasherUnmanaged<char>.Instance :
+                    type == typeof(sbyte) ? (IEqualityComparer<T>)CollisionResistantHasherUnmanaged<sbyte>.Instance :
+                    type == typeof(byte) ? (IEqualityComparer<T>)CollisionResistantHasherUnmanaged<byte>.Instance :
+                    type == typeof(short) ? (IEqualityComparer<T>)CollisionResistantHasherUnmanaged<short>.Instance :
+                    type == typeof(ushort) ? (IEqualityComparer<T>)CollisionResistantHasherUnmanaged<ushort>.Instance :
+                    type == typeof(int) ? (IEqualityComparer<T>)CollisionResistantHasherUnmanaged<int>.Instance :
+                    type == typeof(uint) ? (IEqualityComparer<T>)CollisionResistantHasherUnmanaged<uint>.Instance :
+                    type == typeof(long) ? (IEqualityComparer<T>)CollisionResistantHasherUnmanaged<long>.Instance :
+                    type == typeof(ulong) ? (IEqualityComparer<T>)CollisionResistantHasherUnmanaged<ulong>.Instance :
+                    type == typeof(Guid) ? (IEqualityComparer<T>)CollisionResistantHasherUnmanaged<Guid>.Instance :
 
                     // Data types that are managed or have multiple in-memory representations for equivalent values:
-                    typeof(T) == typeof(float) ? (IEqualityComparer<T>)SingleEqualityComparer.Instance :
-                    typeof(T) == typeof(double) ? (IEqualityComparer<T>)DoubleEqualityComparer.Instance :
-                    typeof(T) == typeof(string) ? (IEqualityComparer<T>)StringEqualityComparer.Instance :
-                    typeof(T) == typeof(DateTime) ? (IEqualityComparer<T>)DateTimeEqualityComparer.Instance :
-                    typeof(T) == typeof(DateTimeOffset) ? (IEqualityComparer<T>)DateTimeOffsetEqualityComparer.Instance :
+                    type == typeof(float) ? (IEqualityComparer<T>)SingleEqualityComparer.Instance :
+                    type == typeof(double) ? (IEqualityComparer<T>)DoubleEqualityComparer.Instance :
+                    type == typeof(string) ? (IEqualityComparer<T>)StringEqualityComparer.Instance :
+                    type == typeof(DateTime) ? (IEqualityComparer<T>)DateTimeEqualityComparer.Instance :
+                    type == typeof(DateTimeOffset) ? (IEqualityComparer<T>)DateTimeOffsetEqualityComparer.Instance :
 
                     // Call out each primitive behind an enum explicitly to avoid dynamically generating code.
-                    typeof(T).GetTypeInfo().IsEnum && typeof(T).GetTypeInfo().GetEnumUnderlyingType() is Type underlying ? (
+                    type.IsEnum && type.GetEnumUnderlyingType() is Type underlying ? (
                         underlying == typeof(byte) ? CollisionResistantEnumHasher<T, byte>.Instance :
                         underlying == typeof(sbyte) ? CollisionResistantEnumHasher<T, sbyte>.Instance :
                         underlying == typeof(ushort) ? CollisionResistantEnumHasher<T, ushort>.Instance :

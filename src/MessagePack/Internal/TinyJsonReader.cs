@@ -58,7 +58,7 @@ namespace MessagePack
         }
     }
 
-    internal class TinyJsonReader : IDisposable
+    internal sealed class TinyJsonReader : IDisposable
     {
         private readonly TextReader reader;
         private readonly bool disposeInnerReader;
@@ -137,62 +137,64 @@ namespace MessagePack
 
         private void ReadNextToken()
         {
-            this.SkipWhiteSpace();
-
-            var intChar = this.reader.Peek();
-            if (intChar == -1)
+            while (true)
             {
-                this.TokenType = TinyJsonToken.None;
-                return;
-            }
+                this.SkipWhiteSpace();
 
-            var c = (char)intChar;
-            switch (c)
-            {
-                case '{':
-                    this.TokenType = TinyJsonToken.StartObject;
+                var intChar = this.reader.Peek();
+                if (intChar == -1)
+                {
+                    this.TokenType = TinyJsonToken.None;
                     return;
-                case '}':
-                    this.TokenType = TinyJsonToken.EndObject;
-                    return;
-                case '[':
-                    this.TokenType = TinyJsonToken.StartArray;
-                    return;
-                case ']':
-                    this.TokenType = TinyJsonToken.EndArray;
-                    return;
-                case '"':
-                    this.TokenType = TinyJsonToken.String;
-                    return;
-                case '0':
-                case '1':
-                case '2':
-                case '3':
-                case '4':
-                case '5':
-                case '6':
-                case '7':
-                case '8':
-                case '9':
-                case '-':
-                    this.TokenType = TinyJsonToken.Number;
-                    return;
-                case 't':
-                    this.TokenType = TinyJsonToken.True;
-                    return;
-                case 'f':
-                    this.TokenType = TinyJsonToken.False;
-                    return;
-                case 'n':
-                    this.TokenType = TinyJsonToken.Null;
-                    return;
-                case ',':
-                case ':':
-                    this.reader.Read();
-                    this.ReadNextToken();
-                    return;
-                default:
-                    throw new TinyJsonException("Invalid String:" + c);
+                }
+
+                var c = (char)intChar;
+                switch (c)
+                {
+                    case '{':
+                        this.TokenType = TinyJsonToken.StartObject;
+                        return;
+                    case '}':
+                        this.TokenType = TinyJsonToken.EndObject;
+                        return;
+                    case '[':
+                        this.TokenType = TinyJsonToken.StartArray;
+                        return;
+                    case ']':
+                        this.TokenType = TinyJsonToken.EndArray;
+                        return;
+                    case '"':
+                        this.TokenType = TinyJsonToken.String;
+                        return;
+                    case '0':
+                    case '1':
+                    case '2':
+                    case '3':
+                    case '4':
+                    case '5':
+                    case '6':
+                    case '7':
+                    case '8':
+                    case '9':
+                    case '-':
+                        this.TokenType = TinyJsonToken.Number;
+                        return;
+                    case 't':
+                        this.TokenType = TinyJsonToken.True;
+                        return;
+                    case 'f':
+                        this.TokenType = TinyJsonToken.False;
+                        return;
+                    case 'n':
+                        this.TokenType = TinyJsonToken.Null;
+                        return;
+                    case ',':
+                    case ':':
+                        this.reader.Read();
+                        continue;
+                    default:
+                        throw new TinyJsonException("Invalid String:" + c);
+                }
             }
         }
 

@@ -68,44 +68,42 @@ namespace MessagePack.Resolvers
 
             static FormatterCache()
             {
-                TypeInfo ti = typeof(T).GetTypeInfo();
-                if (ti.IsNullable())
+                Type type = typeof(T);
+                if (type.IsNullable())
                 {
-                    ti = ti.GenericTypeArguments[0].GetTypeInfo();
+                    type = type.GenericTypeArguments[0];
 
-                    var innerFormatter = DynamicUnionResolver.Instance.GetFormatterDynamic(ti.AsType());
+                    var innerFormatter = DynamicUnionResolver.Instance.GetFormatterDynamic(type);
                     if (innerFormatter == null)
                     {
                         return;
                     }
 
-                    Formatter = (IMessagePackFormatter<T>?)Activator.CreateInstance(typeof(StaticNullableFormatter<>).MakeGenericType(ti.AsType()), new object[] { innerFormatter });
+                    Formatter = (IMessagePackFormatter<T>?)Activator.CreateInstance(typeof(StaticNullableFormatter<>).MakeGenericType(type), new object[] { innerFormatter });
                     return;
                 }
 
-                TypeInfo? formatterTypeInfo = BuildType(typeof(T));
+                TypeInfo? formatterTypeInfo = BuildType(type);
                 if (formatterTypeInfo == null)
                 {
                     return;
                 }
 
-                Formatter = (IMessagePackFormatter<T>?)Activator.CreateInstance(formatterTypeInfo.AsType());
+                Formatter = (IMessagePackFormatter<T>?)Activator.CreateInstance(formatterTypeInfo);
             }
         }
 
         private static TypeInfo? BuildType(Type type)
         {
-            TypeInfo ti = type.GetTypeInfo();
-
             // order by key(important for use jump-table of switch)
-            UnionAttribute[] unionAttrs = ti.GetCustomAttributes<UnionAttribute>().OrderBy(x => x.Key).ToArray();
+            UnionAttribute[] unionAttrs = type.GetCustomAttributes<UnionAttribute>().OrderBy(x => x.Key).ToArray();
 
             if (unionAttrs.Length == 0)
             {
                 return null;
             }
 
-            if (!ti.IsInterface && !ti.IsAbstract)
+            if (!type.IsInterface && !type.IsAbstract)
             {
                 throw new MessagePackDynamicUnionResolverException("Union can only be interface or abstract class. Type:" + type.Name);
             }
@@ -283,7 +281,7 @@ namespace MessagePack.Resolvers
 
                 il.EmitLdarg(1);
                 il.EmitLdarg(2);
-                if (item.Attr.SubType.GetTypeInfo().IsValueType)
+                if (item.Attr.SubType.IsValueType)
                 {
                     il.Emit(OpCodes.Unbox_Any, item.Attr.SubType);
                 }
@@ -323,6 +321,14 @@ namespace MessagePack.Resolvers
 
             il.MarkLabel(falseLabel);
 
+            var reader = new ArgumentField(il, 1);
+
+            // options.Security.DepthStep(ref reader);
+            il.EmitLdarg(2);
+            il.EmitCall(getSecurityFromOptions);
+            reader.EmitLdarg();
+            il.EmitCall(securityDepthStep);
+
             // IFormatterResolver resolver = options.Resolver;
             LocalBuilder localResolver = il.DeclareLocal(typeof(IFormatterResolver));
             il.EmitLdarg(2);
@@ -331,7 +337,6 @@ namespace MessagePack.Resolvers
 
             // read-array header and validate, reader.ReadArrayHeader() != 2) throw;
             Label rightLabel = il.DefineLabel();
-            var reader = new ArgumentField(il, 1);
             reader.EmitLdarg();
             il.EmitCall(MessagePackReaderTypeInfo.ReadArrayHeader);
             il.EmitLdc_I4(2);
@@ -387,7 +392,7 @@ namespace MessagePack.Resolvers
                 il.EmitLdarg(1);
                 il.EmitLdarg(2);
                 il.EmitCall(getDeserialize(item.Attr.SubType));
-                if (item.Attr.SubType.GetTypeInfo().IsValueType)
+                if (item.Attr.SubType.IsValueType)
                 {
                     il.Emit(OpCodes.Box, item.Attr.SubType);
                 }
@@ -397,6 +402,14 @@ namespace MessagePack.Resolvers
             }
 
             il.MarkLabel(loopEnd);
+
+            // reader.Depth--;
+            reader.EmitLdarg();
+            il.Emit(OpCodes.Dup);
+            il.EmitCall(readerDepthGet);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Sub_Ovf);
+            il.EmitCall(readerDepthSet);
 
             il.Emit(OpCodes.Ldloc, result);
             il.Emit(OpCodes.Ret);
@@ -422,6 +435,10 @@ namespace MessagePack.Resolvers
         private static readonly Type refKvp = typeof(KeyValuePair<int, int>).MakeByRefType();
         private static readonly MethodInfo getFormatterWithVerify = typeof(FormatterResolverExtensions).GetRuntimeMethods().First(x => x.Name == "GetFormatterWithVerify");
         private static readonly MethodInfo getResolverFromOptions = typeof(MessagePackSerializerOptions).GetRuntimeProperty(nameof(MessagePackSerializerOptions.Resolver))!.GetMethod!;
+        private static readonly MethodInfo getSecurityFromOptions = typeof(MessagePackSerializerOptions).GetRuntimeProperty(nameof(MessagePackSerializerOptions.Security))!.GetMethod!;
+        private static readonly MethodInfo securityDepthStep = typeof(MessagePackSecurity).GetRuntimeMethod(nameof(MessagePackSecurity.DepthStep), new[] { typeof(MessagePackReader).MakeByRefType() })!;
+        private static readonly MethodInfo readerDepthGet = typeof(MessagePackReader).GetRuntimeProperty(nameof(MessagePackReader.Depth))!.GetMethod!;
+        private static readonly MethodInfo readerDepthSet = typeof(MessagePackReader).GetRuntimeProperty(nameof(MessagePackReader.Depth))!.SetMethod!;
 
         private static readonly Func<Type, MethodInfo> getSerialize = t => typeof(IMessagePackFormatter<>).MakeGenericType(t).GetRuntimeMethod("Serialize", new[] { typeof(MessagePackWriter).MakeByRefType(), t, typeof(MessagePackSerializerOptions) })!;
         private static readonly Func<Type, MethodInfo> getDeserialize = t => typeof(IMessagePackFormatter<>).MakeGenericType(t).GetRuntimeMethod("Deserialize", new[] { typeof(MessagePackReader).MakeByRefType(), typeof(MessagePackSerializerOptions) })!;
